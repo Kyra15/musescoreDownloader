@@ -23,8 +23,14 @@ def search():
 
         saved_pages_data.clear()
         
-        asyncio.run(scrape_musescore(ms_link))
-        pdf_bytes = asyncio.run(convert_with_playwright(saved_pages_data))
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            loop.run_until_complete(scrape_musescore(ms_link))
+            pdf_bytes = loop.run_until_complete(convert_with_playwright(saved_pages_data))
+        finally:
+            loop.close()
 
         return send_file(
             io.BytesIO(pdf_bytes),
