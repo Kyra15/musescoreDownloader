@@ -1,9 +1,9 @@
 from flask import Flask, render_template, request, send_file
 from dotenv import load_dotenv
 import os
-from scraper import scrape_musescore, convert_with_playwright
-import shutil
+from scraper import scrape_musescore, convert_with_playwright, saved_pages_data
 import asyncio
+import io
 
 load_dotenv()
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -20,19 +20,19 @@ def search():
     if request.method == 'POST':
         ms_link = request.form.get("ms_link")
         print("user searched:", ms_link)
+
+        saved_pages_data.clear()
         
-        if os.path.exists("pages"):
-            shutil.rmtree("pages")
-        os.makedirs("pages")
         asyncio.run(scrape_musescore(ms_link))
-        convert_with_playwright()
+        pdf_bytes = asyncio.run(convert_with_playwright(saved_pages_data))
 
-
-    return send_file(
-            "static/output_score.pdf", 
-            as_attachment=True, 
-            download_name="ouput_score.pdf"
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name="output_score.pdf"
         )
+    return "Method not allowed", 405
 
 
 if __name__ == '__main__':
