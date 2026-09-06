@@ -26,25 +26,16 @@ async def handle_response(response):
 
 async def scrape_musescore(ex_str):
 
-    async with async_playwright() as p:
-        user_data_dir = os.path.join(tempfile.gettempdir(), "chrome_profile")
+    token = os.getenv("BROWSERLESS_TOKEN")
+    cdp_url = f"wss://chrome.browserless.io?token={token}&--disable-blink-features=AutomationControlled"
 
-        context = await p.chromium.launch_persistent_context(
-            user_data_dir=user_data_dir,
-            headless=False,
-            args=[
-                "--headless=new",
-                "--window-size=1920,1080",
-                "--disable-blink-features=AutomationControlled",
-                "--enable-webgl",
-                "--use-gl=angle",
-                "--use-angle=gl",
-                "--disable-device-discovery-notifications",
-                "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            ],
-            viewport={"width": 1280, "height": 1000}
+    async with async_playwright() as p:
+        browser = await p.chromium.connect_over_cdp(cdp_url)
+        context = await browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         )
-        page = context.pages[0]
+        page = await context.new_page()
 
         page.on("response", handle_response)
 
@@ -98,11 +89,11 @@ async def convert_with_playwright(page_data_dict):
         html_content += f"<img src='{data_uri}' style='width: 100vw; display: block; page-break-after: always;' />\n"
     html_content += "</body></html>"
 
+    token = os.getenv("BROWSERLESS_TOKEN")
+    cdp_url = f"wss://chrome.browserless.io?token={token}"
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=False,
-            args=["--headless=new", "--no-sandbox"]
-        )
+        browser = await p.chromium.connect_over_cdp(cdp_url)
         page = await browser.new_page()
 
         await page.set_content(html_content, wait_until="load")

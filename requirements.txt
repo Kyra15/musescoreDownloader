@@ -7,4 +7,3 @@ svglib
 reportlab
 pypdf
 patchright
-gunicorn
