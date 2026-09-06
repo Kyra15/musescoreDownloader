@@ -1,0 +1,9 @@
+bs4
+requests
+flask
+dotenv
+playwright
+svglib
+reportlab
+pypdf
+playwright-stealth
