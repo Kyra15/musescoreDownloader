@@ -1,55 +1,33 @@
 import requests
-from playwright.sync_api import sync_playwright
 import re
 import os
-from svglib.svglib import svg2rlg
-from reportlab.graphics import renderPDF
-from pypdf import PdfWriter
-from playwright.async_api import async_playwright
-import shutil
 from patchright.async_api import async_playwright
+import base64
+import tempfile
 
-saved_pages = set()
+saved_pages_data = {}
 
 async def handle_response(response):
 
     if re.search(r"/score_\d+\.(svg|png)", response.url):
         page_num = re.search(r"score_(\d+)", response.url)
-        idx = page_num.group(1) if page_num else str(len(saved_pages))
+        idx = int(page_num.group(1)) if page_num else len(saved_pages_data)
         # print("SVG:", response.url)
 
-        if response.status == 200 and idx not in saved_pages:
-            data = await response.body()
-            ext = "svg" if ".svg" in response.url else "png"
-            file_path = f"pages/sheet_{idx}.{ext}"
+        if response.status == 200 and idx not in saved_pages_data:
+            data_bytes = await response.body()
+            ext = "svg+xml" if ".svg" in response.url else "png"
+            b64_str = base64.b64encode(data_bytes).decode('utf-8')
+            data_uri = f"data:image/{ext};base64,{b64_str}"
 
-            with open(file_path, "wb") as f:
-                f.write(data)
-
-            saved_pages.add(idx)
-            print(f"{idx} ({ext}): {len(data)} bytes")
-
-
-async def solve_cloudflare_if_present(page):
-    try:
-        for frame in page.frames:
-            if "cloudflare" in frame.url or "turnstile" in frame.url:
-                checkbox = frame.locator('input[type="checkbox"], .mark')
-                if await checkbox.is_visible():
-                    print("Cloudflare checkbox detected. Clicking...")
-                    await checkbox.click()
-                    await page.wait_for_timeout(3000)
-    except Exception as e:
-        pass
+            saved_pages_data[idx] = data_uri
+            print(f"{idx} ({ext}): {len(data_bytes)} bytes")
 
 
 async def scrape_musescore(ex_str):
-    if os.path.exists("pages"):
-        shutil.rmtree("pages")
-    os.makedirs("pages")
 
     async with async_playwright() as p:
-        user_data_dir = os.path.join(os.getcwd(), "chrome_profile")
+        user_data_dir = os.path.join(tempfile.gettempdir(), "chrome_profile")
 
         context = await p.chromium.launch_persistent_context(
             user_data_dir=user_data_dir,
@@ -76,8 +54,6 @@ async def scrape_musescore(ex_str):
             timeout=60000
         )
 
-        solve_cloudflare_if_present(page)
-
         await page.mouse.wheel(0, 500)
         await page.wait_for_timeout(1000)
 
@@ -96,15 +72,14 @@ async def scrape_musescore(ex_str):
 
             # stupid lazy-loading
             await child.evaluate("el => el.scrollIntoView({ behavior: 'smooth', block: 'center' })")
-            expected_idx = str(i)
             wait_time = 0
             max_wait = 20000
 
-            while expected_idx not in saved_pages and wait_time < max_wait:
+            while i not in saved_pages_data and wait_time < max_wait:
                 await page.wait_for_timeout(500)
                 wait_time += 500
                     
-            if expected_idx in saved_pages:
+            if i in saved_pages_data:
                 print(f"page {i} loaded after {wait_time} ms")
             else:
                 print(f"page {i} didn't load after {max_wait} ms")
@@ -114,51 +89,34 @@ async def scrape_musescore(ex_str):
         await context.close()
 
 
-def convert_with_playwright():
-
-    pages_dir = os.path.abspath("pages")
-    
-    if not os.path.exists(pages_dir):
-        print(f"dir not found: {pages_dir}")
-        return
-
-    files = [f for f in os.listdir(pages_dir) if f.endswith((".svg", ".png"))]
-    files.sort(key=lambda x: int(re.search(r'\d+', x).group()))
-
-    if not files:
-        print("no pages found to convert")
-        return
+async def convert_with_playwright(page_data_dict):
+    sorted_indices = sorted(page_data_dict.keys())
 
     html_content = "<!DOCTYPE html><html><body style='margin:0; padding:0;'>"
-    for filename in files:
-        file_path = os.path.join(pages_dir, filename)
-        html_content += f"<img src='file://{file_path}' style='width: 100vw; display: block; page-break-after: always;' />\n"
+    for idx in sorted_indices:
+        data_uri = page_data_dict[idx]
+        html_content += f"<img src='{data_uri}' style='width: 100vw; display: block; page-break-after: always;' />\n"
     html_content += "</body></html>"
 
-    html_path = os.path.abspath("temp_score.html")
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write(html_content)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=False,
+            args=["--headless=new", "--no-sandbox"]
+        )
+        page = await browser.new_page()
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        await page.set_content(html_content, wait_until="load")
         
-        page.goto(f"file://{html_path}")
-        page.wait_for_timeout(2000)
-        
-        page.pdf(
-            path="static/output_score.pdf",
+        pdf_bytes = await page.pdf(
             print_background=True,
-            width="8.27in", # a4 dimensions
+            width="8.27in",
             height="11.69in",
             margin={"top": "0", "right": "0", "bottom": "0", "left": "0"}
         )
-        browser.close()
+        await browser.close()
 
-    if os.path.exists(html_path):
-        os.remove(html_path)
-        
     print("success, pdf created")
+    return pdf_bytes
 
 
 
