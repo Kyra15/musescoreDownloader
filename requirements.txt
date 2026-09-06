@@ -6,4 +6,4 @@ playwright
 svglib
 reportlab
 pypdf
-playwright-stealth
+patchright

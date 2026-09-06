@@ -7,7 +7,7 @@ from reportlab.graphics import renderPDF
 from pypdf import PdfWriter
 from playwright.async_api import async_playwright
 import shutil
-from playwright_stealth import Stealth
+from patchright.async_api import async_playwright
 
 saved_pages = set()
 
@@ -30,6 +30,19 @@ async def handle_response(response):
             print(f"{idx} ({ext}): {len(data)} bytes")
 
 
+async def solve_cloudflare_if_present(page):
+    try:
+        for frame in page.frames:
+            if "cloudflare" in frame.url or "turnstile" in frame.url:
+                checkbox = frame.locator('input[type="checkbox"], .mark')
+                if await checkbox.is_visible():
+                    print("Cloudflare checkbox detected. Clicking...")
+                    await checkbox.click()
+                    await page.wait_for_timeout(3000)
+    except Exception as e:
+        pass
+
+
 async def scrape_musescore(ex_str):
     if os.path.exists("pages"):
         shutil.rmtree("pages")
@@ -37,26 +50,23 @@ async def scrape_musescore(ex_str):
 
     async with async_playwright() as p:
         user_data_dir = os.path.join(os.getcwd(), "chrome_profile")
-        # browser = p.chromium.launch(channel="chrome", headless=False, args=["--disable-blink-features=AutomationControlled"])
-        # context = browser.new_context(
-            # viewport={"width": 1280, "height": 1000}, 
-            # user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            # java_script_enabled=True)
-        # page = context.new_page()
-        
+
         context = await p.chromium.launch_persistent_context(
             user_data_dir=user_data_dir,
-            channel="chrome",
             headless=False,
-            args=["--disable-blink-features=AutomationControlled"],
+            args=[
+                "--headless=new",
+                "--window-size=1920,1080",
+                "--disable-blink-features=AutomationControlled",
+                "--enable-webgl",
+                "--use-gl=angle",
+                "--use-angle=gl",
+                "--disable-device-discovery-notifications",
+                "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            ],
             viewport={"width": 1280, "height": 1000}
         )
         page = context.pages[0]
-
-        stealth = Stealth()
-        await stealth.apply_stealth_async(page)
-
-        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         page.on("response", handle_response)
 
@@ -66,11 +76,15 @@ async def scrape_musescore(ex_str):
             timeout=60000
         )
 
+        solve_cloudflare_if_present(page)
+
+        await page.mouse.wheel(0, 500)
+        await page.wait_for_timeout(1000)
+
         # let musescore js run
         scroller_selector = '[id^="jmuse-scroller-component"]'
-        await page.wait_for_selector(scroller_selector, timeout=20000)
+        await page.wait_for_selector(scroller_selector, state="attached", timeout=20000)
         scroll_component = page.locator(scroller_selector).first
-        # imgs = scroll_component.locator("img")
 
         children = scroll_component.locator(":scope > .SQS_G")
         await page.wait_for_timeout(2000)
@@ -84,58 +98,23 @@ async def scrape_musescore(ex_str):
             await child.evaluate("el => el.scrollIntoView({ behavior: 'smooth', block: 'center' })")
             expected_idx = str(i)
             wait_time = 0
-            max_wait = 20.0
+            max_wait = 20000
+
+            while expected_idx not in saved_pages and wait_time < max_wait:
+                await page.wait_for_timeout(500)
+                wait_time += 500
                     
             if expected_idx in saved_pages:
-                print(f"page {i} loaded after {wait_time} seconds")
-                # print(
-                #     "child src:",
-                #     child.locator("img").get_attribute("src")
-                # )
+                print(f"page {i} loaded after {wait_time} ms")
             else:
-                print(f"page {i} didn't load after {max_wait} seconds")
+                print(f"page {i} didn't load after {max_wait} ms")
             
         # page.wait_for_timeout(1000)
         print("finished scraping")
         await context.close()
 
 
-# def convert_to_svg_pdf():
-#     os.makedirs("temp_pdf_dir", exist_ok=True)
-#     temp_pdf_files = []
-
-#     svg_files = [f for f in os.listdir("pages") if f.endswith(".svg")]
-
-#     try:
-#         for i, svg_path in enumerate(svg_files):
-#             drawing = svg2rlg(svg_path)
-#             if drawing is None:
-#                 print(f"Could not parse {svg_path}")
-#                 continue
-            
-#             temp_pdf_path = os.path.join("temp_pdf_dir", f"page_{i:04d}.pdf")
-#             renderPDF.drawToFile(drawing, temp_pdf_path)
-#             temp_pdf_files.append(temp_pdf_path)
-
-#         merger = PdfWriter()
-#         for pdf in temp_pdf_files:
-#             merger.append(pdf)
-        
-#         merger.write("output_pdf.pdf")
-#         merger.close()
-
-#     finally:
-#         for pdf in temp_pdf_files:
-#             if os.path.exists(pdf):
-#                 os.remove(pdf)
-#         if os.path.exists("temp_pdf_dir"):
-#             os.rmdir("temp_pdf_dir")
-
-
 def convert_with_playwright():
-    if os.path.exists("static"):
-        shutil.rmtree("static")
-    os.makedirs("static")
 
     pages_dir = os.path.abspath("pages")
     
@@ -182,9 +161,6 @@ def convert_with_playwright():
     print("success, pdf created")
 
 
-# scrape_musescore()
-# convert_to_svg_pdf()
-# convert_with_playwright()
 
 # if __name__ == "__main__":
 #     ex_str = "https://musescore.com/user/76891138/scores/36754394"

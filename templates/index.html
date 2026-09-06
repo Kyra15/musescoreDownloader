@@ -4,18 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>musescore -> pdf</title>
+    <link rel="stylesheet" href="static/css/styles.css">
 </head>
 <body>
+    <div class="home">
+        <h1 class="home__header">musescore to pdf converter</h1>
+        <form action="/convert" method="POST">
+            <label class="home__text">copy and paste the musescore link to your sheet music</label>
+            <br>
+            <input type="text" name="ms_link" required class="home__input">
 
-    <h1>musescore to pdf converter</h1>
-    <form action="/convert" method="POST">
-        <label>copy and paste the musescore link to your sheet music</label>
-        <input type="text" name="ms_link" required>
+            <input type="submit" value="convert!" class="home__upload-btn">
+        </form>
+    </div>
 
-        <input type="submit" value="convert!">
-    </form>
-
-    <!-- {% if converted %}
+<!-- 
+    {% if converted %}
         <a href="{{ url_for('static', filename='output_score.pdf') }}" download class="download-btn">
             <button>download pdf</button>
         </a>
